@@ -1,0 +1,151 @@
+name: Build mobile apps
+run-name: Mobile ${{ inputs.platform }} ${{ inputs.correlation }}
+on:
+  workflow_dispatch:
+    inputs:
+      platform:
+        type: choice
+        options: [both, android, ios]
+        default: both
+      wrapper_sha:
+        type: string
+        required: true
+      source_sha:
+        type: string
+        required: true
+      correlation:
+        type: string
+        required: true
+permissions:
+  contents: read
+concurrency:
+  group: mobile-${{ inputs.platform }}
+  cancel-in-progress: false
+jobs:
+  android:
+    if: inputs.platform == 'both' || inputs.platform == 'android'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    env:
+      ADMIN_SOURCE_SHA: ${{ inputs.source_sha }}
+      CARGO_BUILD_JOBS: '2'
+    steps:
+      - name: Validate revisions
+        env:
+          WRAPPER_SHA: ${{ inputs.wrapper_sha }}
+        run: |
+          [[ "$WRAPPER_SHA" =~ ^[a-f0-9]{40}$ ]]
+          [[ "$ADMIN_SOURCE_SHA" =~ ^[a-f0-9]{40}$ ]]
+      - uses: actions/checkout@v4
+        with:
+          repository: InstaFarms/admin-panel-app
+          ref: ${{ inputs.wrapper_sha }}
+          ssh-key: ${{ secrets.SOURCE_REPO_SSH_KEY }}
+          persist-credentials: false
+          path: source
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: 'aarch64-linux-android'
+      - uses: actions/setup-java@v4
+        with: {distribution: temurin, java-version: '17'}
+      - uses: android-actions/setup-android@v3
+        with: {packages: platform-tools}
+      - run: sdkmanager 'ndk;28.2.13676358' 'platforms;android-36' 'build-tools;36.0.0'
+      - run: sudo apt-get install -y age
+      - name: Compile privately
+        id: compile
+        working-directory: source
+        shell: bash
+        run: |
+          mkdir -p artifacts
+          if (npm ci && npm run build:android) > artifacts/build.log 2>&1; then
+            echo success > artifacts/result.txt
+          else
+            echo failure > artifacts/result.txt
+            echo '::error::Build failed. Detailed logs are encrypted for the owner.'
+            exit 1
+          fi
+      - name: Encrypt results
+        if: ${{ !cancelled() && steps.compile.outcome != 'skipped' }}
+        working-directory: source
+        env:
+          RECIPIENT: ${{ vars.ARTIFACT_RECIPIENT }}
+        run: |
+          test -n "$RECIPIENT"
+          tar -czf "$RUNNER_TEMP/results.tar.gz" artifacts
+          age -r "$RECIPIENT" -o "$RUNNER_TEMP/results.tar.gz.age" "$RUNNER_TEMP/results.tar.gz"
+          rm "$RUNNER_TEMP/results.tar.gz"
+      - uses: actions/upload-artifact@v4
+        if: ${{ !cancelled() && steps.compile.outcome != 'skipped' }}
+        with:
+          name: encrypted-android
+          path: ${{ runner.temp }}/results.tar.gz.age
+          if-no-files-found: error
+          retention-days: 7
+      - name: Clean private workspace
+        if: always()
+        run: rm -rf source
+  ios:
+    if: inputs.platform == 'both' || inputs.platform == 'ios'
+    runs-on: macos-15
+    timeout-minutes: 45
+    env:
+      ADMIN_SOURCE_SHA: ${{ inputs.source_sha }}
+      CARGO_BUILD_JOBS: '2'
+    steps:
+      - name: Validate revisions
+        env:
+          WRAPPER_SHA: ${{ inputs.wrapper_sha }}
+        run: |
+          [[ "$WRAPPER_SHA" =~ ^[a-f0-9]{40}$ ]]
+          [[ "$ADMIN_SOURCE_SHA" =~ ^[a-f0-9]{40}$ ]]
+      - uses: actions/checkout@v4
+        with:
+          repository: InstaFarms/admin-panel-app
+          ref: ${{ inputs.wrapper_sha }}
+          ssh-key: ${{ secrets.SOURCE_REPO_SSH_KEY }}
+          persist-credentials: false
+          path: source
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: 'aarch64-apple-ios-sim,aarch64-apple-ios'
+      - run: brew install xcodegen age
+      - name: Compile privately
+        id: compile
+        working-directory: source
+        shell: bash
+        run: |
+          mkdir -p artifacts
+          if (npm ci && npm run build:ios) > artifacts/build.log 2>&1; then
+            echo success > artifacts/result.txt
+          else
+            echo failure > artifacts/result.txt
+            echo '::error::Build failed. Detailed logs are encrypted for the owner.'
+            exit 1
+          fi
+      - name: Encrypt results
+        if: ${{ !cancelled() && steps.compile.outcome != 'skipped' }}
+        working-directory: source
+        env:
+          RECIPIENT: ${{ vars.ARTIFACT_RECIPIENT }}
+        run: |
+          test -n "$RECIPIENT"
+          tar -czf "$RUNNER_TEMP/results.tar.gz" artifacts
+          age -r "$RECIPIENT" -o "$RUNNER_TEMP/results.tar.gz.age" "$RUNNER_TEMP/results.tar.gz"
+          rm "$RUNNER_TEMP/results.tar.gz"
+      - uses: actions/upload-artifact@v4
+        if: ${{ !cancelled() && steps.compile.outcome != 'skipped' }}
+        with:
+          name: encrypted-ios
+          path: ${{ runner.temp }}/results.tar.gz.age
+          if-no-files-found: error
+          retention-days: 7
+      - name: Clean private workspace
+        if: always()
+        run: rm -rf source
