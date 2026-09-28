@@ -7,6 +7,9 @@ on:
         type: choice
         options: [both, android, ios]
         default: both
+      release:
+        type: boolean
+        default: false
       wrapper_sha:
         type: string
         required: true
@@ -95,6 +98,8 @@ jobs:
     env:
       ADMIN_SOURCE_SHA: ${{ inputs.source_sha }}
       CARGO_BUILD_JOBS: '2'
+      IOS_RELEASE: ${{ inputs.release }}
+      IOS_BUILD_NUMBER: ${{ github.run_number }}
     steps:
       - name: Validate revisions
         env:
@@ -117,6 +122,10 @@ jobs:
           targets: 'aarch64-apple-ios-sim,aarch64-apple-ios'
       - run: brew install xcodegen age
       - name: Compile privately
+        env:
+          IOS_CERTIFICATE: ${{ inputs.release && secrets.IOS_CERTIFICATE || '' }}
+          IOS_CERTIFICATE_PASSWORD: ${{ inputs.release && secrets.IOS_CERTIFICATE_PASSWORD || '' }}
+          IOS_MOBILE_PROVISION: ${{ inputs.release && secrets.IOS_MOBILE_PROVISION || '' }}
         id: compile
         working-directory: source
         shell: bash
