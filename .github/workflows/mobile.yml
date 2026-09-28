@@ -93,7 +93,7 @@ jobs:
         run: rm -rf source
   ios:
     if: inputs.platform == 'both' || inputs.platform == 'ios'
-    runs-on: macos-15
+    runs-on: macos-26
     timeout-minutes: 45
     env:
       ADMIN_SOURCE_SHA: ${{ inputs.source_sha }}
@@ -120,6 +120,11 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
         with:
           targets: 'aarch64-apple-ios-sim,aarch64-apple-ios'
+      - name: Verify supported Apple SDK
+        run: |
+          xcodebuild -version
+          SDK_VERSION=$(xcrun --sdk iphoneos --show-sdk-version)
+          test "${SDK_VERSION%%.*}" -ge 26
       - run: brew install xcodegen age
       - name: Compile privately
         env:
